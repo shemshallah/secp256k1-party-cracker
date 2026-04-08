@@ -1282,8 +1282,8 @@ class MoonshineOracle:
         for exp, coeff in coeffs.items():
             if exp < 0:
                 continue
-            # Use k's bit pattern to construct a harmonic weighting
-            bit_val = (k >> exp) & 1
+            # Use candidate_k's bit pattern to construct a harmonic weighting
+            bit_val = (candidate_k >> exp) & 1
             score += coeff * bit_val
 
         # Normalize
@@ -1300,7 +1300,7 @@ class MoonshineOracle:
         This detects when the isogeny path passes through a CM point
         resonant with the Baby Monster structure.
         """
-        order = self._class_map.get(class_symbol, (1, 1))[0]
+        order = self._class_map.get(class_symbol, (1, 1, 1))[1]
         return (j_val % order) == 0
 
     def get_j_function_coeff(self, n: int) -> int:
@@ -3284,34 +3284,52 @@ class CathedralTsarBomba:
 
 
     def _load_isogeny_table(self, path: str):
-        """Load isogeny_table.txt (Layer 2/3 data)."""
+        """Load isogeny_table.txt in format: ell: [i,j] coeff"""
         if not os.path.exists(path):
             print(f"[WARN] Isogeny table not found at {path}")
             return
         
         try:
             with open(path, 'r') as f:
-                for line_num, line in enumerate(f, 1):
-                    line = line.strip()
-                    if not line or line.startswith('#'):
-                        continue
-                    try:
-                        # Expected format: ell,x,y,j_source,j_image or similar
-                        parts = line.split(',')
-                        if len(parts) >= 2:
-                            ell = int(parts[0])
-                            data = {k: v for k, v in zip(
-                                ['x', 'y', 'j_source', 'j_image', 'a', 'b'],
-                                parts[1:]
-                            )}
-                            if ell not in self.isogeny_table:
-                                self.isogeny_table[ell] = []
-                            self.isogeny_table[ell].append(data)
-                    except (ValueError, IndexError):
-                        if line_num < 10:  # Log first few errors only
-                            print(f"[WARN] Isogeny table line {line_num} parse error: {line[:60]}")
+                lines = f.readlines()
             
-            print(f"[OK] Loaded isogeny_table.txt: {sum(len(v) for v in self.isogeny_table.values())} entries across {len(self.isogeny_table)} primes")
+            current_ell = None
+            entry_count = 0
+            
+            for line_num, line in enumerate(lines, 1):
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                
+                # Check for prime header (e.g., "3:", "5:", "7:", "11:")
+                if line.endswith(':'):
+                    try:
+                        current_ell = int(line[:-1])
+                        if current_ell not in self.isogeny_table:
+                            self.isogeny_table[current_ell] = {}
+                    except ValueError:
+                        pass
+                    continue
+                
+                # Parse [i,j] coefficient lines
+                if current_ell is not None and '[' in line and ']' in line:
+                    try:
+                        # Format: [i,j] coefficient
+                        bracket_end = line.index(']')
+                        bracket_part = line[1:bracket_end]  # Extract "i,j"
+                        coeff_part = line[bracket_end+1:].strip()
+                        
+                        i, j = map(int, bracket_part.split(','))
+                        coeff = int(coeff_part)
+                        
+                        if (i, j) not in self.isogeny_table[current_ell]:
+                            self.isogeny_table[current_ell][(i, j)] = coeff
+                            entry_count += 1
+                    except (ValueError, IndexError, KeyError):
+                        if line_num < 20:  # Log first few parse attempts
+                            pass  # Silently skip malformed lines
+            
+            print(f"[OK] Loaded isogeny_table.txt: {entry_count} entries across {len(self.isogeny_table)} primes")
         except Exception as e:
             print(f"[ERROR] Failed to load isogeny table: {e}")
 
